@@ -1,0 +1,16 @@
+FROM public.ecr.aws/docker/library/node:22-alpine
+
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 /lambda-adapter /opt/extensions/lambda-adapter
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY src ./src
+
+ENV NODE_ENV=production
+ENV PORT=8080
+ENV AWS_LWA_PORT=8080
+ENV AWS_LWA_READINESS_CHECK_PATH=/api/health
+
+EXPOSE 8080
+CMD ["node", "src/server.js"]

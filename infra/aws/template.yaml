@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: "Roamly AWS-first full-stack deployment: Lambda + API Gateway + DynamoDB + S3 + CloudFront."
+
+Parameters:
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+  BedrockModelId:
+    Type: String
+    Default: ''
+    NoEcho: false
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 1024
+    Tracing: Active
+
+Resources:
+  SharedPlacesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: shareId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: shareId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  RoamlyApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowHeaders:
+          - content-type
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        MaxAge: 300
+
+  RoamlyApiFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: ../../server
+      DockerTag: latest
+    Properties:
+      PackageType: Image
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          NODE_ENV: production
+          PORT: '8080'
+          CLIENT_URL: '*'
+          AWS_LOCATION_REGION: !Ref AWS::Region
+          AWS_BEDROCK_REGION: !Ref BedrockRegion
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          DYNAMODB_TABLE_NAME: !Ref SharedPlacesTable
+          MAX_SEARCH_RADIUS_KM: '50'
+          DEFAULT_SEARCH_RADIUS_KM: '5'
+          PROVIDER_TIMEOUT_MS: '12000'
+          MAX_PLACES_PER_RESPONSE: '80'
+          MAX_RECOMMENDATION_PLACES: '8'
+          SHARE_TTL_DAYS: '7'
+          AWS_LWA_READINESS_CHECK_PATH: /api/health
+          AWS_LWA_PORT: '8080'
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Sid: AmazonLocationPlaces
+              Effect: Allow
+              Action:
+                - geo-places:SearchNearby
+                - geo-places:SearchText
+                - geo-places:GetPlace
+                - geo-places:Geocode
+              Resource: !Sub arn:${AWS::Partition}:geo-places:${AWS::Region}::provider/default
+            - Sid: AmazonLocationRoutes
+              Effect: Allow
+              Action:
+                - geo-routes:CalculateRoutes
+              Resource: !Sub arn:${AWS::Partition}:geo-routes:${AWS::Region}::provider/default
+            - Sid: AmazonBedrockInference
+              Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: '*'
+            - Sid: SharedPlaceReadWrite
+              Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt SharedPlacesTable.Arn
+      Events:
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref RoamlyApi
+            Path: /api/{proxy+}
+            Method: ANY
+
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  WebOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-web-oac'
+        Description: CloudFront access to the Roamly S3 frontend bucket.
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2and3
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: RoamlyS3Origin
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            OriginAccessControlId: !Ref WebOriginAccessControl
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: RoamlyS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${WebBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}'
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway HTTP API base URL.
+    Value: !GetAtt RoamlyApi.ApiEndpoint
+  WebsiteBucketName:
+    Description: S3 bucket for the built React frontend.
+    Value: !Ref WebBucket
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID for cache invalidations.
+    Value: !Ref WebDistribution
+  WebsiteUrl:
+    Description: CloudFront website URL.
+    Value: !Sub 'https://${WebDistribution.DomainName}'
+  SharedPlacesTableName:
+    Description: DynamoDB share table.
+    Value: !Ref SharedPlacesTable

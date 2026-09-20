@@ -1,0 +1,19 @@
+{
+  "name": "roamly",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "install:all": "npm ci --prefix server && npm ci --prefix client",
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "npm run start --prefix server",
+    "validate": "node scripts/validate-project.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "KeyName": "RoamlyWebKey",
+  "NoExpiry": true,
+  "Restrictions": {
+    "AllowActions": [
+      "geo-maps:GetTile",
+      "geo-maps:GetStyleDescriptor",
+      "geo-maps:GetSprites",
+      "geo-maps:GetGlyphs",
+      "geo-maps:GetStaticMap"
+    ],
+    "AllowResources": [
+      "arn:aws:geo-maps:REGION::provider/default"
+    ],
+    "AllowReferers": [
+      "http://localhost:5173/*",
+      "http://localhost:4173/*"
+    ]
+  }
+}

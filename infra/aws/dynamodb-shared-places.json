@@ -1,0 +1,10 @@
+{
+  "TableName": "roamly-shared-places",
+  "BillingMode": "PAY_PER_REQUEST",
+  "AttributeDefinitions": [
+    { "AttributeName": "shareId", "AttributeType": "S" }
+  ],
+  "KeySchema": [
+    { "AttributeName": "shareId", "KeyType": "HASH" }
+  ]
+}
