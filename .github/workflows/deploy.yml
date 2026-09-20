@@ -1,0 +1,48 @@
+name: Deploy Roamly to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            cd ~/Bharat-Build-project
+
+            echo "Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "Installing backend dependencies..."
+            cd server
+            npm ci
+
+            echo "Restarting backend..."
+            pm2 restart roamly-api --update-env
+
+            echo "Building frontend..."
+            cd ../client
+            npm ci
+            npm run build
+
+            echo "Deploying frontend..."
+            sudo rm -rf /var/www/roamly/*
+            sudo cp -r dist/* /var/www/roamly/
+
+            echo "Reloading Nginx..."
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            echo "Deployment completed successfully!"
